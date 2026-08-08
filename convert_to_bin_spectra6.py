@@ -2,13 +2,13 @@
 #encoding: utf-8
 
 """
-Convert images to the Spectra 6 .bin format (Spectra 6 13.3" panel, EL133UF1
-controller, 1200x1600, 6-color).
+Convert images to the Spectra 6 .bin format, for either the 13.3" panel
+(EL133UF1 controller, 1200x1600) or the 31.5" panel (EL315, 1440x2560).
 
 Reuses a tuned 6-color quantization / Atkinson dithering metric, but instead of
 saving a BMP it tracks the per-pixel palette index and packs the 4-bit indexed
-.bin the panel expects (two pixels per byte, left/right half split, 960,000
-bytes total).
+.bin the chosen panel expects (two pixels per byte; see the packers below for
+each panel's memory layout).
 """
 
 import sys
@@ -27,11 +27,6 @@ try:
     HEIC_SUPPORTED = True
 except ImportError:
     HEIC_SUPPORTED = False
-
-# Target panel geometry (Spectra 6 13.3" / EL133UF1)
-TARGET_WIDTH = 1200
-TARGET_HEIGHT = 1600
-EXPECTED_BIN_SIZE = (TARGET_WIDTH // 2) * TARGET_HEIGHT  # 960,000 bytes
 
 # Supported input formats (.heic only when pillow-heif is available)
 IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.webp', '.gif']
@@ -52,6 +47,13 @@ PALETTE_COLORS = [
 # 4-bit device codes for the EL133UF1 panel. Note 0x4 is intentionally skipped.
 #                       Black White Yellow Red  Blue Green
 COLOR_CODES = np.array([0x0,  0x1,  0x2,   0x3, 0x5, 0x6], dtype=np.uint8)
+
+# White. Used for the off-panel dummy pixels in the EL315 padded ICs, which are
+# always 0x11 regardless of the image's own border color.
+WHITE_CODE = 0x1
+
+# Letterbox border colors, selectable with --letterbox.
+LETTERBOX_COLORS = {'black': (0, 0, 0), 'white': (255, 255, 255)}
 
 # Precompute palette as NumPy arrays for faster access
 PALETTE_ARRAY = np.array(PALETTE_COLORS, dtype=np.float32)
@@ -133,10 +135,15 @@ def quantize_floydsteinberg_indexed(image):
     return np.array(idx_img, dtype=np.uint8)
 
 
-# Fit an (already EXIF-corrected, RGB) image into the fixed 1200x1600 portrait frame.
-def fit_to_frame(image, fit):
+# Scale an (already EXIF-corrected, RGB) image to its final on-panel pixel size.
+# Under 'crop' this returns exactly the panel frame; under letterbox/rotate it
+# returns the picture alone, which pad_to_frame later centers on the frame.
+# Kept separate from padding so enhancement runs on the picture only — see
+# process_image.
+def scale_to_frame(image, fit, panel):
     img = image
     width, height = img.size
+    target_width, target_height = panel.width, panel.height
 
     # 'rotate': turn landscape images upright so they better fill the portrait
     # frame, then letterbox as usual.
@@ -146,59 +153,134 @@ def fit_to_frame(image, fit):
 
     if fit == 'crop':
         # Scale to fill, then center-crop the overflow (no borders, edges lost).
-        scale_ratio = max(TARGET_WIDTH / width, TARGET_HEIGHT / height)
+        scale_ratio = max(target_width / width, target_height / height)
         resized_width = max(1, int(round(width * scale_ratio)))
         resized_height = max(1, int(round(height * scale_ratio)))
         resized = img.resize((resized_width, resized_height), Image.LANCZOS)
-        left = (resized_width - TARGET_WIDTH) // 2
-        top = (resized_height - TARGET_HEIGHT) // 2
-        return resized.crop((left, top, left + TARGET_WIDTH, top + TARGET_HEIGHT))
+        left = (resized_width - target_width) // 2
+        top = (resized_height - target_height) // 2
+        return resized.crop((left, top, left + target_width, top + target_height))
 
     # 'letterbox' (and 'rotate' after reorientation): scale to fit entirely inside
-    # the frame and pad the remainder with a black border (no cropping).
-    scale_ratio = min(TARGET_WIDTH / width, TARGET_HEIGHT / height)
+    # the frame, no cropping. Any leftover space becomes bars in pad_to_frame.
+    scale_ratio = min(target_width / width, target_height / height)
     resized_width = max(1, int(round(width * scale_ratio)))
     resized_height = max(1, int(round(height * scale_ratio)))
-    resized = img.resize((resized_width, resized_height), Image.LANCZOS)
-    framed = Image.new('RGB', (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0))
-    left = (TARGET_WIDTH - resized_width) // 2
-    top = (TARGET_HEIGHT - resized_height) // 2
-    framed.paste(resized, (left, top))
+    return img.resize((resized_width, resized_height), Image.LANCZOS)
+
+
+# Center the scaled picture on the panel frame, padding any remainder with
+# letterbox_rgb. A no-op when the picture already fills the frame (e.g. --fit crop).
+def pad_to_frame(image, panel, letterbox_rgb):
+    if image.size == (panel.width, panel.height):
+        return image
+
+    framed = Image.new('RGB', (panel.width, panel.height), letterbox_rgb)
+    framed.paste(image, ((panel.width - image.width) // 2,
+                         (panel.height - image.height) // 2))
     return framed
 
 
-# Pack the per-pixel index array into the EL133UF1 .bin format.
-def generate_binary_file(color_indices, output_path):
+# Pack device codes into the EL133UF1 (13.3") .bin layout.
+def pack_el133uf1(color_code_array):
     """
-    EL133UF1 binary format:
-    - 1200x1600 pixels
-    - 4-bit indexed color, two pixels per byte (high nibble = even col, low = odd col)
-    - Split into left half (cols 0-599) then right half (cols 600-1199)
+    - 1200x1600 pixels, portrait
+    - Two pixels per byte (high nibble = even col, low nibble = odd col)
+    - Split into left half (cols 0-599) then right half (cols 600-1199):
+      all left-half bytes for the whole image come first, then all right-half bytes
     - Total size: 960,000 bytes
     """
-    height, width = color_indices.shape
-    if width != TARGET_WIDTH or height != TARGET_HEIGHT:
-        raise ValueError(f"Image must be exactly {TARGET_WIDTH}x{TARGET_HEIGHT}, got {width}x{height}")
-
-    # Map palette indices to 4-bit device codes (vectorized)
-    color_code_array = COLOR_CODES[color_indices]
-
-    # Process left half (columns 0-599)
     left_half = color_code_array[:, 0:600]
     left_packed = (left_half[:, 0::2] << 4) | left_half[:, 1::2]
 
-    # Process right half (columns 600-1199)
     right_half = color_code_array[:, 600:1200]
     right_packed = (right_half[:, 0::2] << 4) | right_half[:, 1::2]
 
-    # Flatten and concatenate (all left bytes, then all right bytes)
-    binary_data = np.concatenate([
-        left_packed.flatten(),
-        right_packed.flatten()
-    ]).astype(np.uint8)
+    return np.concatenate([left_packed.ravel(), right_packed.ravel()]).astype(np.uint8)
 
-    if len(binary_data) != EXPECTED_BIN_SIZE:
-        raise ValueError(f"Binary file must be exactly {EXPECTED_BIN_SIZE} bytes, got {len(binary_data)}")
+
+# EL315 block geometry: 8 IC blocks, each 720 block rows x 800 block pixels.
+EL315_BLOCK_ROWS = 720
+EL315_BLOCK_PIXELS = 800
+EL315_PADDED_PIXELS = 160  # real pixels per row in the padded ICs (IC4, IC8)
+EL315_ROW_PIXELS = 2560    # block pixels per block row, across an IC group
+EL315_HALF_ROWS = 1280     # image rows covered by one IC group
+
+
+# Pack device codes into the EL315 (31.5") .bin layout.
+def pack_el315(color_code_array):
+    """
+    - 1440x2560 pixels, portrait
+    - 8 IC blocks of 288,000 bytes written sequentially IC1 -> IC8; each block is
+      720 block rows x 400 bytes, two pixels per byte (high nibble first)
+    - The ICs come in two groups of four, each group covering half the image:
+      IC1-IC4 the BOTTOM half (rows 1280-2559), IC5-IC8 the TOP half (rows 0-1279).
+    - Within a group, one block row is a 2-pixel-wide VERTICAL STRIP of the image,
+      1280 rows tall, read bottom->top; the two pixels of each image row are stored
+      left then right. So block row b covers image columns 2b and 2b+1, and block
+      pixel p sits at image row offset p // 2 up from the bottom of the half.
+    - The four ICs in a group split that 1280-row strip as 400/400/400/80 rows,
+      counting up from the bottom of the half, so IC4 and IC8 hold only 160 real
+      pixels per row; the remaining 320 bytes of their rows are 0x11 padding.
+    - Total size: 2,304,000 bytes
+    """
+    # Flipping vertically puts the bottom half of the image first, matching the
+    # IC1-IC4 group, and makes each half read bottom->top.
+    flipped = np.flipud(color_code_array)  # 2560 x 1440
+
+    blocks = []
+    for half in range(2):  # IC1-IC4 (bottom half), then IC5-IC8 (top half)
+        strip = flipped[half * EL315_HALF_ROWS:(half + 1) * EL315_HALF_ROWS]
+        # Regroup 1280 rows x 1440 cols into 720 block rows of 2560 pixels, so that
+        # each block row walks one 2-px-wide column pair down the strip.
+        band = (strip.reshape(EL315_HALF_ROWS, EL315_BLOCK_ROWS, 2)
+                     .transpose(1, 0, 2)
+                     .reshape(EL315_BLOCK_ROWS, EL315_ROW_PIXELS))
+        for ic in range(4):
+            real_pixels = EL315_PADDED_PIXELS if ic == 3 else EL315_BLOCK_PIXELS
+            start = ic * EL315_BLOCK_PIXELS
+            # Prefill with white so the padded ICs' dummy bytes come out as 0x11.
+            nibbles = np.full((EL315_BLOCK_ROWS, EL315_BLOCK_PIXELS), WHITE_CODE, dtype=np.uint8)
+            nibbles[:, :real_pixels] = band[:, start:start + real_pixels]
+            blocks.append((nibbles[:, 0::2] << 4) | nibbles[:, 1::2])
+
+    return np.concatenate([block.ravel() for block in blocks]).astype(np.uint8)
+
+
+# A supported screen: its portrait frame, its exact .bin size, and its packer.
+class Panel:
+    def __init__(self, key, label, width, height, bin_size, packer):
+        self.key = key
+        self.label = label
+        self.width = width
+        self.height = height
+        self.bin_size = bin_size
+        self.packer = packer
+
+    # Output filename suffix, e.g. '_1200x1600_s6.bin'.
+    @property
+    def suffix(self):
+        return f'_{self.width}x{self.height}_s6.bin'
+
+
+PANELS = {
+    '133': Panel('133', 'Spectra 6 13.3" / EL133UF1', 1200, 1600, 960000, pack_el133uf1),
+    '315': Panel('315', 'Spectra 6 31.5" / EL315', 1440, 2560, 2304000, pack_el315),
+}
+DEFAULT_PANEL = '133'
+
+
+# Pack the per-pixel index array into the given panel's .bin format.
+def generate_binary_file(color_indices, output_path, panel):
+    height, width = color_indices.shape
+    if width != panel.width or height != panel.height:
+        raise ValueError(f"Image must be exactly {panel.width}x{panel.height}, got {width}x{height}")
+
+    # Map palette indices to 4-bit device codes (vectorized)
+    binary_data = panel.packer(COLOR_CODES[color_indices])
+
+    if len(binary_data) != panel.bin_size:
+        raise ValueError(f"Binary file must be exactly {panel.bin_size} bytes, got {len(binary_data)}")
 
     with open(output_path, 'wb') as f:
         f.write(binary_data.tobytes())
@@ -206,15 +288,19 @@ def generate_binary_file(color_indices, output_path):
 
 # Convert a single image file to a .bin. Returns True on success, False on failure.
 def process_image(image_file, args):
+    panel = PANELS[args.screen]
     try:
         # Read input image and apply EXIF orientation so phone photos aren't sideways.
         input_image = ImageOps.exif_transpose(Image.open(image_file)).convert('RGB')
 
-        # Fit into the fixed 1200x1600 portrait frame per the chosen mode.
-        framed_image = fit_to_frame(input_image, args.fit)
+        # Scale to the final on-panel size, but don't add the letterbox bars yet.
+        scaled_image = scale_to_frame(input_image, args.fit, panel)
 
-        # Apply enhancements (brightness, contrast, saturation)
-        enhanced_image = ImageEnhance.Brightness(framed_image).enhance(args.brightness)
+        # Enhance the picture on its own, before framing: the bars must not skew
+        # the contrast adjustment (which pivots on mean brightness) and the
+        # filters below must not bleed across the picture/bar seam. Running this
+        # after scaling keeps the sharpening at output resolution.
+        enhanced_image = ImageEnhance.Brightness(scaled_image).enhance(args.brightness)
         enhanced_image = ImageEnhance.Contrast(enhanced_image).enhance(args.contrast)
         enhanced_image = ImageEnhance.Color(enhanced_image).enhance(args.saturation)
 
@@ -225,20 +311,23 @@ def process_image(image_file, args):
         # Add sharpening for better detail visibility
         enhanced_image = enhanced_image.filter(ImageFilter.SHARPEN)
 
+        # Now frame it: center on the panel and pad with the chosen bar color.
+        framed_image = pad_to_frame(enhanced_image, panel, LETTERBOX_COLORS[args.letterbox])
+
         # Quantize to per-pixel palette indices
         if args.dither == 'atkinson':
-            color_indices = quantize_atkinson_indexed(enhanced_image)
+            color_indices = quantize_atkinson_indexed(framed_image)
         else:
-            color_indices = quantize_floydsteinberg_indexed(enhanced_image)
+            color_indices = quantize_floydsteinberg_indexed(framed_image)
 
         # Determine output path (next to input, or in --output-dir if given)
-        out_name = os.path.splitext(os.path.basename(image_file))[0] + '_1200x1600_s6.bin'
+        out_name = os.path.splitext(os.path.basename(image_file))[0] + panel.suffix
         if args.output_dir:
             output_filename = os.path.join(args.output_dir, out_name)
         else:
             output_filename = os.path.join(os.path.dirname(image_file), out_name)
 
-        generate_binary_file(color_indices, output_filename)
+        generate_binary_file(color_indices, output_filename, panel)
 
         print(f'Successfully converted {image_file} to {output_filename}')
         return True
@@ -248,13 +337,17 @@ def process_image(image_file, args):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Convert images to Spectra 6 .bin (1200x1600, Spectra 6 13.3" / EL133UF1).')
+    parser = argparse.ArgumentParser(description='Convert images to Spectra 6 .bin for the 13.3" (EL133UF1) or 31.5" (EL315) panel.')
     parser.add_argument('input_paths', nargs='+', type=str, help='Input image file(s) or directory')
+    parser.add_argument('--screen', choices=sorted(PANELS), default=DEFAULT_PANEL,
+                        help='Target panel: 133 (13.3", 1200x1600, EL133UF1) or 315 (31.5", 1440x2560, EL315)')
     parser.add_argument('--dither', choices=['atkinson', 'fs'], default='atkinson',
                         help='Dithering algorithm: atkinson (tuned metric, slow) or fs (Floyd-Steinberg, fast)')
     parser.add_argument('--fit', choices=['letterbox', 'rotate', 'crop'], default='letterbox',
-                        help='How to fit images into the 1200x1600 frame: letterbox (black bars, no crop), '
+                        help='How to fit images into the panel frame: letterbox (bars, no crop), '
                              'rotate (turn landscape upright then letterbox), or crop (fill and crop edges)')
+    parser.add_argument('--letterbox', choices=sorted(LETTERBOX_COLORS), default='black',
+                        help='Letterbox bar color for --fit letterbox/rotate (ignored by --fit crop)')
     parser.add_argument('--output-dir', type=str, default=None,
                         help='Directory to write .bin files into (default: next to each input image)')
     parser.add_argument('--brightness', type=float, default=1.1, help='Brightness factor (1.0 = no change)')
@@ -291,6 +384,8 @@ def collect_image_files(input_paths):
 def main():
     args = parse_args()
 
+    panel = PANELS[args.screen]
+    print(f'Target panel: {panel.label} ({panel.width}x{panel.height}, {panel.bin_size:,} bytes per image)')
     if not HEIC_SUPPORTED:
         print("Note: pillow-heif not installed; .heic input is disabled (install it to enable).")
     if args.dither == 'atkinson':

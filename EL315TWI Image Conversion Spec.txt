@@ -1,0 +1,170 @@
+# EL315 Image Binary (.bin) Specification
+
+**Purpose**: This document defines the exact binary image format that conversion tools must emit to render images on the 31.5″ E‑Ink Spectra™ 6 panel (model **EL315**). It focuses only on the *output file* required by the display pipeline (no device/firmware details).
+
+---
+
+## 1) Target Frame
+
+* **Resolution**: **1440 × 2560** pixels (portrait, 9:16).
+* **Color model**: **Indexed 4‑bit** (one of six allowed colors per pixel).
+
+> The source (PNG/JPEG/BMP) **must** be resized/cropped/letterboxed to exactly **1440×2560** before encoding.
+
+> Note that the panel's internal storage order is **not** raster order — see Section 5. Authoring, dithering, and letterboxing are all done in the 1440×2560 portrait frame; the reordering happens only at packing time.
+
+---
+
+## 2) Allowed Palette (and 4‑bit Codes)
+
+Each pixel must be one of the six Spectra‑6 colors using the **exact** 4‑bit code below:
+
+| Color  | RGB888    | 4‑bit code |
+| ------ | --------- | ---------- |
+| Black  | `#000000` | `0x0`      |
+| White  | `#FFFFFF` | `0x1`      |
+| Yellow | `#FFFF00` | `0x2`      |
+| Red    | `#FF0000` | `0x3`      |
+| Blue   | `#0000FF` | `0x5`      |
+| Green  | `#00FF00` | `0x6`      |
+
+These codes are defined by the panel vendor and **must not** be remapped or reordered. Codes `0x4` and `0x7`–`0xF` are not used; every nibble in the file must be one of the six values above.
+
+---
+
+## 3) Pixel Packing (4‑bit, two pixels per byte)
+
+* **Two pixels per byte**, high nibble first: pack as `(first_pixel << 4) | second_pixel`.
+  Example: Red (`0x3`) then Blue (`0x5`) → byte `0x35`.
+* "First" and "second" refer to position along the **block row** defined in Section 5 — *not* to the portrait frame's left/right.
+
+---
+
+## 4) File Size and Layout
+
+* **Exact size**: **2,304,000 bytes**. **No header, no footer, no compression.**
+* **Eight concatenated IC blocks**, written sequentially IC1 → IC8 (reflecting the panel's eight‑controller architecture):
+
+| Block | File offset | Size      |
+| ----- | ----------- | --------- |
+| IC1   | 0           | 288,000 B |
+| IC2   | 288,000     | 288,000 B |
+| IC3   | 576,000     | 288,000 B |
+| IC4   | 864,000     | 288,000 B |
+| IC5   | 1,152,000   | 288,000 B |
+| IC6   | 1,440,000   | 288,000 B |
+| IC7   | 1,728,000   | 288,000 B |
+| IC8   | 2,016,000   | 288,000 B |
+
+Each block is **288,000 bytes = 720 block rows × 400 bytes per row**, row‑major.
+
+**Full ICs (IC1, IC2, IC3, IC5, IC6, IC7)** — each 400‑byte row is 800 real pixels, all data, no padding (800 × 720 = 576,000 real pixels per IC).
+
+**Padded ICs (IC4 and IC8 only)** — each 400‑byte row is split:
+
+| Row bytes  | Content                                    |
+| ---------- | ------------------------------------------ |
+| `[0:80]`   | 160 real pixels (80 bytes of image data)   |
+| `[80:400]` | 320 bytes of `0x11` padding (white dummy)  |
+
+This row pattern repeats for all 720 rows of the block. Padding is off‑panel dummy data and is **always** `0x11`, regardless of the image's border or letterbox color.
+
+Real pixels total 6 × 576,000 + 2 × 115,200 = **3,686,400** = 1440 × 2560.
+
+---
+
+## 5) Frame Mapping (portrait frame → IC blocks)
+
+The ICs come in **two groups of four**, each group covering **half the image**:
+
+* **IC1–IC4 → the BOTTOM half** (portrait rows 1280–2559)
+* **IC5–IC8 → the TOP half** (portrait rows 0–1279)
+
+Within a group, a block row is **not** an image row. Each block row is a **2‑pixel‑wide vertical strip** of the image, 1280 rows tall, read **bottom→top**; the two pixels of each image row are stored **left then right**. Block row `b` therefore covers image columns `2b` and `2b+1`, which is how 720 block rows span all 1440 columns.
+
+For IC *k* (1..8), let `g = (k-1) / 4` (0 for IC1–IC4, 1 for IC5–IC8) and `j = (k-1) % 4`. For block row `b` (0..719) and block pixel `p` (0..799, or 0..159 in a padded IC), let `q = j * 800 + p` be the position along the group's 2560‑pixel block row. The portrait pixel `(x, y)` is:
+
+```
+x = 2 * b + (q % 2)                    (portrait column, 0..1439)
+y = 2559 - (g * 1280 + q / 2)          (portrait row,    0..2559)
+```
+
+Consequently the four ICs of a group split its 1280‑row half into bands of **400 / 400 / 400 / 80** rows, counting **up from the bottom** of that half:
+
+| Block | Portrait rows covered   |
+| ----- | ----------------------- |
+| IC1   | 2160–2559 (bottom band) |
+| IC2   | 1760–2159               |
+| IC3   | 1360–1759               |
+| IC4   | 1280–1359 (80 rows)     |
+| IC5   | 880–1279                |
+| IC6   | 480–879                 |
+| IC7   | 80–479                  |
+| IC8   | 0–79 (**top** 80 rows)  |
+
+The 160 real pixels per row of a padded IC are 80 image rows × 2 columns — a *short strip*, not a narrow column.
+
+Equivalently, using zero‑indexed arrays, from the portrait frame `P` (shape 2560 × 1440):
+
+```
+F = flipud(P)                                        # 2560 x 1440
+for g in 0, 1:                                       # g=0 -> IC1..IC4, g=1 -> IC5..IC8
+    strip = F[g*1280 : (g+1)*1280]                   # 1280 x 1440
+    band  = strip.reshape(1280, 720, 2)              # -> (row, block row, left/right)
+                 .transpose(1, 0, 2)
+                 .reshape(720, 2560)                 # 720 block rows x 2560 pixels
+    emit band[:, 0:800], band[:, 800:1600], band[:, 1600:2400], band[:, 2400:2560]
+```
+
+padding the last block of each group out to 400 bytes per row with `0x11`.
+
+> **Note for tool authors:** a converter that instead treats a block row as a single image *column* (a plain transpose) produces output that is **stretched 2× vertically and squashed 2× horizontally**, with the two halves side by side. On a photo this can still look superficially plausible — text stays legible, just tall and narrow — so verify against a known‑good file or an asymmetric test pattern, not a horizontally uniform one.
+
+---
+
+## 6) Input→Palette Conversion Requirements (for tool authors)
+
+* Convert source pixels to the six‑color palette **exactly** as in Section 2.
+* **Dithering**: Allowed (e.g., Floyd–Steinberg or ordered/Bayer) to improve gradients; avoid extreme checkerboard patterns that can increase power demand.
+* Dither in the **portrait frame**, before the Section 5 reordering, so error diffusion follows the image's natural reading order.
+* The final indexed image **must** contain only the six codes `{0x0,0x1,0x2,0x3,0x5,0x6}` before packing.
+
+---
+
+## 7) Compliance Checklist (converter SHOULD enforce)
+
+1. **Dimensions** = 1440×2560 (portrait).
+2. **Palette validation**: Indices limited to `{0x0,0x1,0x2,0x3,0x5,0x6}`.
+3. **Packing** = two 4‑bit pixels per byte, `(first<<4)|second`.
+4. **File size** = exactly **2,304,000 bytes**; **no headers**.
+5. **Block layout** = 8 × 288,000‑byte IC blocks in order IC1→IC8.
+6. **Padding**: in IC4 and IC8 only, bytes `[80:400]` of every row are `0x11`.
+7. **Frame mapping** matches Section 5 (half per IC group, 2‑px column‑pair strips, bottom→top).
+
+---
+
+## 8) Notes for Visual Quality (non‑normative)
+
+* Good results typically require contrast/gamma pre‑tuning and appropriate dithering per content type (photos vs. line art).
+* Persistent heavy dithering (e.g., 1‑pixel checkerboards) may drive the panel's **max power** case; prefer gentler patterns.
+
+---
+
+### Minimal Example Byte Walkthrough (Informative)
+
+IC1 begins at file offset 0 with block row `b = 0`, which is the **2‑pixel‑wide strip at portrait columns 0 and 1**. Its first pixel (`p = 0`) is portrait pixel `(x=0, y=2559)` — the **bottom‑left** corner of the image — and `p = 1` is its right neighbour `(x=1, y=2559)`. The pair `p = 2, 3` is the row above, and so on *upward*.
+
+So if the bottom two rows of columns 0–1 are:
+
+```
+y=2558:  [Yellow, Red  ]
+y=2559:  [Black,  White]
+```
+
+then `p = 0..3` are `[0x0, 0x1, 0x2, 0x3]` and the first two bytes of the file are `0x01` then `0x23`. Continue for 800 pixels (400 bytes) to finish block row 0, which covers portrait rows 2160–2559 of columns 0–1; block row 1 then covers the same rows of columns 2–3.
+
+For IC4, only the first 80 bytes of each row carry image data (portrait rows 1280–1359, 80 rows × 2 columns); the remaining 320 bytes are `0x11`.
+
+---
+
+**Output**: A single file of **2,304,000 bytes** named as you prefer (e.g., `image_1440x2560_s6.bin`). No BOM/headers/metadata.

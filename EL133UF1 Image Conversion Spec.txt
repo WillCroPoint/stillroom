@@ -1,0 +1,91 @@
+# EL133UF1 Image Binary (.bin) Specification
+
+**Purpose**: This document defines the exact binary image format that conversion tools must emit to render images on the 13.3″ E‑Ink Spectra™ 6 panel (model **EL133UF1**). It focuses only on the *output file* required by the display pipeline (no device/firmware details).
+
+---
+
+## 1) Target Frame
+
+* **Resolution**: **1200 × 1600** pixels (portrait, 3:4).
+* **Color model**: **Indexed 4‑bit** (one of six allowed colors per pixel).
+
+> The source (PNG/JPEG/BMP) **must** be resized/cropped/letterboxed to exactly **1200×1600** before encoding.
+
+---
+
+## 2) Allowed Palette (and 4‑bit Codes)
+
+Each pixel must be one of the six Spectra‑6 colors using the **exact** 4‑bit code below:
+
+| Color  | RGB888    | 4‑bit code |
+| ------ | --------- | ---------- |
+| Black  | `#000000` | `0x0`      |
+| White  | `#FFFFFF` | `0x1`      |
+| Yellow | `#FFFF00` | `0x2`      |
+| Red    | `#FF0000` | `0x3`      |
+| Blue   | `#0000FF` | `0x5`      |
+| Green  | `#00FF00` | `0x6`      |
+
+These codes are defined by the panel vendor and **must not** be remapped or reordered.
+
+---
+
+## 3) Pixel Packing (4‑bit, two pixels per byte)
+
+* Process pixels **left→right** within each row, **row 0→1599** (top→bottom).
+* **Two pixels per byte**: pack as `(left_pixel << 4) | right_pixel`.
+  Example: Red (`0x3`) then Blue (`0x5`) → byte `0x35`.
+
+---
+
+## 4) File Size and Layout
+
+* **Exact size**: **960,000 bytes** (1,920,000 pixels ÷ 2). **No header, no footer.**
+* **Half‑split by columns** (reflecting the panel’s dual‑controller architecture):
+
+  * **Bytes 0–479,999**  → Columns **0–599** (left half)
+  * **Bytes 480,000–959,999** → Columns **600–1199** (right half)
+
+**Row‑major order** within each half. For a given row *y* (0..1599):
+
+```
+[ (x=0,1), (2,3), …, (598,599) ]  |  [ (600,601), …, (1198,1199) ]
+```
+
+Each pair is emitted as a single packed byte as described in Section 3.
+
+---
+
+## 5) Input→Palette Conversion Requirements (for tool authors)
+
+* Convert source pixels to the six‑color palette **exactly** as in Section 2.
+* **Dithering**: Allowed (e.g., Floyd–Steinberg or ordered/Bayer) to improve gradients; avoid extreme checkerboard patterns that can increase power demand.
+* The final indexed image **must** contain only the six codes `{0x0,0x1,0x2,0x3,0x5,0x6}` before packing.
+
+---
+
+## 6) Compliance Checklist (converter SHOULD enforce)
+
+1. **Dimensions** = 1200×1600 (portrait).
+2. **Palette validation**: Indices limited to `{0x0,0x1,0x2,0x3,0x5,0x6}`.
+3. **Packing** = two 4‑bit pixels per byte, `(left<<4)|right`.
+4. **File size** = exactly **960,000 bytes**; **no headers**.
+5. **Memory layout**: first 480,000 bytes for columns 0–599; next 480,000 bytes for columns 600–1199.
+
+---
+
+## 7) Notes for Visual Quality (non‑normative)
+
+* Good results typically require contrast/gamma pre‑tuning and appropriate dithering per content type (photos vs. line art).
+* Persistent heavy dithering (e.g., 1‑pixel checkerboards) may drive the panel’s **max power** case; prefer gentler patterns.
+
+---
+
+### Minimal Example Byte Walkthrough (Informative)
+
+For row 0, the first four pixels are: `[Black, White, Yellow, Red]` → codes `[0x0, 0x1, 0x2, 0x3]`.
+Packed bytes: `0x01` then `0x23`. Continue until 600 pixels (300 bytes) → **left half** done; then pack the **right half**.
+
+---
+
+**Output**: A single file of **960,000 bytes** named as you prefer (e.g., `image_1200x1600_s6.bin`). No BOM/headers/metadata.
