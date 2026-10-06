@@ -5,8 +5,8 @@
 Convert images to the Spectra 6 .bin format, for either the 13.3" panel
 (EL133UF1 controller, 1200x1600) or the 31.5" panel (EL315, 1440x2560).
 
-Reuses a tuned 6-color quantization / Atkinson dithering metric, but instead of
-saving a BMP it tracks the per-pixel palette index and packs the 4-bit indexed
+Supports several six-colour dithering methods. Instead of saving a BMP it tracks
+the per-pixel palette index and packs the 4-bit indexed
 .bin the chosen panel expects (two pixels per byte; see the packers below for
 each panel's memory layout).
 """
@@ -15,9 +15,16 @@ import sys
 import os
 import os.path
 import numpy as np
-from PIL import Image, ImageOps, ImageEnhance, ImageFilter
+from PIL import Image, ImageOps
+from color_profiles import DEFAULT_PROFILE, PROFILES, enhance_image
 import argparse
-from tqdm import tqdm
+from image_background import extend_to_frame, flatten, gradient_colors, background_color
+from threaded_function_runner import ThreadedFunctionRunner
+
+#################################################################################
+# DEBUG: open generated image in browser
+#import webbrowser
+#################################################################################
 
 # HEIC support is optional: only enabled if pillow-heif is installed. JPEG/PNG/etc
 # work without it.
@@ -33,16 +40,9 @@ IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.webp', '.gif']
 if HEIC_SUPPORTED:
     IMAGE_EXTENSIONS.append('.heic')
 
-# Define the 6-color palette (black, white, yellow, red, blue, green).
-# Order matters: index i maps to COLOR_CODES[i].
-PALETTE_COLORS = [
-    (0, 0, 0),       # Black
-    (255, 255, 255), # White
-    (255, 255, 0),   # Yellow
-    (255, 0, 0),     # Red
-    (0, 0, 255),     # Blue
-    (0, 255, 0)      # Green
-]
+from dithering import (PALETTE_COLORS, DEFAULT_DITHER, DITHERS, dither_options,
+                       quantize_image, quantize_atkinson_indexed,
+                       quantize_floydsteinberg_indexed)
 
 # 4-bit device codes for the EL133UF1 panel. Note 0x4 is intentionally skipped.
 #                       Black White Yellow Red  Blue Green
@@ -55,101 +55,20 @@ WHITE_CODE = 0x1
 # Letterbox border colors, selectable with --letterbox.
 LETTERBOX_COLORS = {'black': (0, 0, 0), 'white': (255, 255, 255)}
 
-# Precompute palette as NumPy arrays for faster access
-PALETTE_ARRAY = np.array(PALETTE_COLORS, dtype=np.float32)
-# blue and green prints darker, lower its luma value so the distance metric favors it over white, also at luma1
-PALETTE_LUMA_ARRAY = np.array([r*250 + g*350 + b*400 for (r, g, b) in PALETTE_COLORS], dtype=np.float32) / (255.0 * 1000)
-
-
-# Find the closest palette color using floating-point arithmetic (exact RGBL method)
-def closest_palette_color(rgb):
-    r1, g1, b1 = rgb
-    # Calculate luma for the input pixel
-    luma1 = (r1 * 250 + g1 * 350 + b1 * 400) / (255.0 * 1000)
-
-    # Calculate differences using precomputed arrays
-    diffR = r1 - PALETTE_ARRAY[:, 0]
-    diffG = g1 - PALETTE_ARRAY[:, 1]
-    diffB = b1 - PALETTE_ARRAY[:, 2]
-
-    # Calculate RGB component of distance
-    # boost blue, reduce green a bit and red a little more to compensate for human eye sensitivity and e-ink display characteristics (trial and error)
-    rgb_dist = (diffR*diffR*0.250 + diffG*diffG*0.350 + diffB*diffB*0.400) * 0.75 / (255.0*255.0)
-
-    # Calculate luma differences
-    luma_diff = luma1 - PALETTE_LUMA_ARRAY
-    luma_dist = luma_diff * luma_diff
-
-    # Total distance
-    total_dist = 1.5*rgb_dist + 0.60*luma_dist  # hue errors are more important, increased the rgb_dist factor.
-
-    # Find minimum distance index
-    return np.argmin(total_dist)
-
-
-# Atkinson dithering returning a per-pixel palette-index array (not RGB).
-# Uses the tuned closest_palette_color metric for each decision.
-def quantize_atkinson_indexed(image):
-    img_array = np.array(image.convert('RGB'))
-    height, width, _ = img_array.shape
-    # Use float array for error diffusion to avoid integer truncation issues
-    working_img = img_array.astype(np.float32)
-    indices = np.zeros((height, width), dtype=np.uint8)
-
-    for y in range(height):
-        for x in range(width):
-            old_pixel = working_img[y, x].copy()
-            # Use exact color comparison instead of lookup table for better accuracy
-            idx = closest_palette_color(tuple(np.clip(old_pixel, 0, 255).astype(int)))
-            new_pixel = np.array(PALETTE_COLORS[idx], dtype=np.float32)
-            working_img[y, x] = new_pixel
-            indices[y, x] = idx
-
-            # Calculate error
-            error = old_pixel - new_pixel
-
-            # Atkinson error distribution - only to not-yet-processed pixels (right and down)
-            # Weights: Right: 1/8, Bottom-left: 1/8, Bottom: 1/4, Bottom-right: 1/8
-            # Total distributed: 5/8, which is standard for Atkinson
-            if x + 1 < width:
-                working_img[y, x + 1] += error * (1/8)
-            if y + 1 < height:
-                if x - 1 >= 0:
-                    working_img[y + 1, x - 1] += error * (1/8)
-                working_img[y + 1, x] += error * (1/4)
-                if x + 1 < width:
-                    working_img[y + 1, x + 1] += error * (1/8)
-
-    return indices
-
-
-# Floyd-Steinberg via Pillow returning a per-pixel palette-index array.
-# Fast, but uses Pillow's plain Euclidean matching rather than the tuned metric.
-def quantize_floydsteinberg_indexed(image):
-    pal_image = Image.new("P", (1, 1))
-    flat_palette = [c for color in PALETTE_COLORS for c in color]
-    # Pad to a full 256-entry palette; only the first 6 entries are used.
-    pal_image.putpalette(flat_palette + [0, 0, 0] * (256 - len(PALETTE_COLORS)))
-
-    idx_img = image.convert('RGB').quantize(dither=Image.Dither.FLOYDSTEINBERG, palette=pal_image)
-    return np.array(idx_img, dtype=np.uint8)
-
-
 # Scale an (already EXIF-corrected, RGB) image to its final on-panel pixel size.
-# Under 'crop' this returns exactly the panel frame; under letterbox/rotate it
+# Under 'crop' this returns exactly the panel frame; under letterbox it
 # returns the picture alone, which pad_to_frame later centers on the frame.
 # Kept separate from padding so enhancement runs on the picture only — see
 # process_image.
-def scale_to_frame(image, fit, panel):
+def scale_to_frame(image, fit, panel, orientation="portrait"):
     img = image
     width, height = img.size
     target_width, target_height = panel.width, panel.height
 
-    # 'rotate': turn landscape images upright so they better fill the portrait
-    # frame, then letterbox as usual.
-    if fit == 'rotate' and width > height:
-        img = img.rotate(90, expand=True)
-        width, height = img.size
+    # Fit in the user's viewing orientation. Storage rotation happens only
+    # after cropping/padding, so source content stays upright on the frame.
+    if orientation == 'landscape':
+        target_width, target_height = target_height, target_width
 
     if fit == 'crop':
         # Scale to fill, then center-crop the overflow (no borders, edges lost).
@@ -161,7 +80,7 @@ def scale_to_frame(image, fit, panel):
         top = (resized_height - target_height) // 2
         return resized.crop((left, top, left + target_width, top + target_height))
 
-    # 'letterbox' (and 'rotate' after reorientation): scale to fit entirely inside
+    # 'letterbox': scale to fit entirely inside
     # the frame, no cropping. Any leftover space becomes bars in pad_to_frame.
     scale_ratio = min(target_width / width, target_height / height)
     resized_width = max(1, int(round(width * scale_ratio)))
@@ -171,13 +90,16 @@ def scale_to_frame(image, fit, panel):
 
 # Center the scaled picture on the panel frame, padding any remainder with
 # letterbox_rgb. A no-op when the picture already fills the frame (e.g. --fit crop).
-def pad_to_frame(image, panel, letterbox_rgb):
-    if image.size == (panel.width, panel.height):
+def pad_to_frame(image, panel, letterbox_rgb, orientation="portrait"):
+    width, height = panel.width, panel.height
+    if orientation == 'landscape':
+        width, height = height, width
+    if image.size == (width, height):
         return image
 
-    framed = Image.new('RGB', (panel.width, panel.height), letterbox_rgb)
-    framed.paste(image, ((panel.width - image.width) // 2,
-                         (panel.height - image.height) // 2))
+    framed = Image.new('RGB', (width, height), letterbox_rgb)
+    framed.paste(image, ((width - image.width) // 2,
+                         (height - image.height) // 2))
     return framed
 
 
@@ -286,78 +208,134 @@ def generate_binary_file(color_indices, output_path, panel):
         f.write(binary_data.tobytes())
 
 
+def output_path(image_file, args):
+    name = os.path.splitext(os.path.basename(image_file))[0] + PANELS[args.screen].suffix
+    return os.path.join(args.output_dir or os.path.dirname(image_file), name)
+
+
 # Convert a single image file to a .bin. Returns True on success, False on failure.
 def process_image(image_file, args):
     panel = PANELS[args.screen]
     try:
         # Read input image and apply EXIF orientation so phone photos aren't sideways.
-        input_image = ImageOps.exif_transpose(Image.open(image_file)).convert('RGB')
+        input_image = Image.open(image_file)
+        if not args.no_transpose:
+            input_image = ImageOps.exif_transpose(input_image)
+        input_image = input_image.convert('RGBA')
+        colors = gradient_colors(input_image)
 
         # Scale to the final on-panel size, but don't add the letterbox bars yet.
-        scaled_image = scale_to_frame(input_image, args.fit, panel)
+        scaled_image = scale_to_frame(input_image, args.fit, panel, args.orientation)
 
-        # Enhance the picture on its own, before framing: the bars must not skew
-        # the contrast adjustment (which pivots on mean brightness) and the
-        # filters below must not bleed across the picture/bar seam. Running this
-        # after scaling keeps the sharpening at output resolution.
-        enhanced_image = ImageEnhance.Brightness(scaled_image).enhance(args.brightness)
-        enhanced_image = ImageEnhance.Contrast(enhanced_image).enhance(args.contrast)
-        enhanced_image = ImageEnhance.Color(enhanced_image).enhance(args.saturation)
-
-        # Add edge enhancement
-        enhanced_image = enhanced_image.filter(ImageFilter.EDGE_ENHANCE)
-        # Add noise reduction
-        enhanced_image = enhanced_image.filter(ImageFilter.SMOOTH)
-        # Add sharpening for better detail visibility
-        enhanced_image = enhanced_image.filter(ImageFilter.SHARPEN)
-
-        # Now frame it: center on the panel and pad with the chosen bar color.
-        framed_image = pad_to_frame(enhanced_image, panel, LETTERBOX_COLORS[args.letterbox])
+        scaled_image = enhance_subject(scaled_image, args.brightness, args.contrast, args.saturation, args.profile)
+        frame_size = (panel.width, panel.height) if args.orientation == 'portrait' else (panel.height, panel.width)
+        scaled_image = extend_to_frame(scaled_image, frame_size, args.fit == 'letterbox')
+        framed_image = flatten(scaled_image, getattr(args, 'background', 'solid'),
+                               getattr(args, 'background_color', None) or ('#000000' if getattr(args, 'letterbox', None) == 'black' else '#ffffff'),
+                               getattr(args, 'background_angle', 90), colors)
+        # Both devices expect portrait storage. A landscape-mounted panel is
+        # turned counter-clockwise, so store the composed image clockwise.
+        if args.orientation == 'landscape':
+            framed_image = framed_image.transpose(Image.Transpose.ROTATE_270)
 
         # Quantize to per-pixel palette indices
-        if args.dither == 'atkinson':
-            color_indices = quantize_atkinson_indexed(framed_image)
-        else:
-            color_indices = quantize_floydsteinberg_indexed(framed_image)
+        color_indices = quantize_image(framed_image, args.dither)
 
         # Determine output path (next to input, or in --output-dir if given)
-        out_name = os.path.splitext(os.path.basename(image_file))[0] + panel.suffix
-        if args.output_dir:
-            output_filename = os.path.join(args.output_dir, out_name)
-        else:
-            output_filename = os.path.join(os.path.dirname(image_file), out_name)
+        output_filename = output_path(image_file, args)
+
+        #################################################################################
+        ## DEBUG: open generated image in browser
+        #debug_output_filename = output_filename + '-DEBUG.png'
+        ##scaled_image.save(debug_output_filename)
+        #framed_image.save(debug_output_filename)
+        #webbrowser.open('file://' + debug_output_filename)
+        #################################################################################
 
         generate_binary_file(color_indices, output_filename, panel)
 
-        print(f'Successfully converted {image_file} to {output_filename}')
+        #################################################################################
+        #print(f'Successfully converted {image_file} to {output_filename}')
+        #################################################################################
         return True
     except Exception as e:
         print(f'Error processing {image_file}: {e}')
         return False
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='Convert images to Spectra 6 .bin for the 13.3" (EL133UF1) or 31.5" (EL315) panel.')
+def normalize_orientation(value):
+    aliases = {'portrait': 'portrait', 'vertical': 'portrait',
+               'landscape': 'landscape', 'horizontal': 'landscape'}
+    try:
+        return aliases[value.lower()]
+    except KeyError:
+        raise argparse.ArgumentTypeError('use portrait/vertical or landscape/horizontal')
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description='Convert images to Spectra 6 .bin for the 13.3" (EL133UF1) or 31.5" (EL315) panel.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''Examples (orientation describes the FRAME, not the source photo):
+  Vertical frame, fill and crop a landscape photo, then preview:
+    %(prog)s -s 315 -O portrait -f crop -p landscape.jpg
+  Horizontal frame, keep the whole photo with bars, then preview:
+    %(prog)s -s 315 -O landscape -f letterbox -p photo.jpg
+  Batch on four CPU processes (no batch preview):
+    %(prog)s -s 315 -O landscape -j 4 -r ./photos/
+
+Portrait is the default. Use -O landscape for a horizontally mounted frame.
+The preview is displayed upright automatically; no rotation angle is needed.
+''')
     parser.add_argument('input_paths', nargs='+', type=str, help='Input image file(s) or directory')
-    parser.add_argument('--screen', choices=sorted(PANELS), default=DEFAULT_PANEL,
+    parser.add_argument('-s', '--screen', choices=sorted(PANELS), default=DEFAULT_PANEL,
                         help='Target panel: 133 (13.3", 1200x1600, EL133UF1) or 315 (31.5", 1440x2560, EL315)')
-    parser.add_argument('--dither', choices=['atkinson', 'fs'], default='atkinson',
-                        help='Dithering algorithm: atkinson (tuned metric, slow) or fs (Floyd-Steinberg, fast)')
-    parser.add_argument('--fit', choices=['letterbox', 'rotate', 'crop'], default='letterbox',
-                        help='How to fit images into the panel frame: letterbox (bars, no crop), '
-                             'rotate (turn landscape upright then letterbox), or crop (fill and crop edges)')
-    parser.add_argument('--letterbox', choices=sorted(LETTERBOX_COLORS), default='black',
-                        help='Letterbox bar color for --fit letterbox/rotate (ignored by --fit crop)')
-    parser.add_argument('--output-dir', type=str, default=None,
+    parser.add_argument('-O', '--orientation', type=normalize_orientation,
+                        choices=['portrait', 'landscape'], default='portrait',
+                        help='Frame orientation: portrait/vertical (default), or '
+                             'landscape/horizontal; independent of source image shape')
+    parser.add_argument('-P', '--profile', choices=list(PROFILES), default=DEFAULT_PROFILE,
+                        help='Colour look: soft (default), natural (no enhancement), vivid, original (legacy treatment)')
+    parser.add_argument('-d', '--dither', choices=list(DITHERS), default=DEFAULT_DITHER,
+                        help='Dithering: fs (default, fast), fs-serpentine, stucki, sierra, atkinson (classic), epd (optional external engine)')
+    parser.add_argument('-f', '--fit', choices=['crop', 'letterbox'], default='crop',
+                        help='crop (default): fill the frame and trim edges; letterbox: keep the whole image with bars')
+    parser.add_argument('-l', '--letterbox', choices=sorted(LETTERBOX_COLORS), default=None,
+                        help='Legacy solid background colour shortcut; --background-color takes precedence')
+    parser.add_argument('-o', '--output-dir', type=str, default=None,
                         help='Directory to write .bin files into (default: next to each input image)')
-    parser.add_argument('--brightness', type=float, default=1.1, help='Brightness factor (1.0 = no change)')
-    parser.add_argument('--contrast', type=float, default=1.2, help='Contrast factor (1.0 = no change)')
-    parser.add_argument('--saturation', type=float, default=1.2, help='Color saturation factor (1.0 = no change)')
-    return parser.parse_args()
+    parser.add_argument('-n', '--no-transpose', action='store_true', default=False, help='Disable EXIF rotation')
+    parser.add_argument('-j', '--jobs', type=int, default=1,
+                        help='Number of worker processes, one image per worker (default: 1)')
+    parser.add_argument('-p', '--preview', action='store_true',
+                        help='After conversion, open a temporary PNG in the browser in frame orientation; '
+                             'requires exactly one input image')
+    parser.add_argument('-r', '--recursive', action='store_true',
+                        help='Search supplied directories recursively for images')
+    parser.add_argument('-b', '--brightness', type=float, default=None, help='Optional brightness override (default: profile setting)')
+    parser.add_argument('-c', '--contrast', type=float, default=None, help='Optional contrast override (default: profile setting)')
+    parser.add_argument('-S', '--saturation', type=float, default=None, help='Optional saturation override (default: profile setting)')
+    parser.add_argument('-B', '--background', choices=['solid', 'gradient'], default='solid', help='Background for transparent areas and letterbox space: solid (default) or automatic gradient')
+    parser.add_argument('-C', '--background-color', type=background_color, default=None, help='Solid background as #RRGGBB (default: white)')
+    parser.add_argument('-A', '--background-angle', type=float, default=90, help='Gradient direction: 0 right, 90 down, 180 left, 270 up')
+    args = parser.parse_args(argv)
+    if not np.isfinite(args.background_angle) or not 0 <= args.background_angle <= 360:
+        parser.error('--background-angle must be between 0 and 360')
+    if args.jobs < 1:
+        parser.error('--jobs must be at least 1')
+    return args
+
+
+def enhance_subject(image, brightness=None, contrast=None, saturation=None, profile=DEFAULT_PROFILE):
+    """Apply the colour look to the subject while retaining its alpha mask."""
+    alpha = image.convert('RGBA').getchannel('A')
+    result = enhance_image(image, brightness, contrast, saturation, profile)
+    result.putalpha(alpha)
+    return result
 
 
 # Collect image files from the given file/dir paths.
-def collect_image_files(input_paths):
+def collect_image_files(input_paths, recursive=False):
     all_image_files = []
     for input_path in input_paths:
         if not os.path.exists(input_path):
@@ -368,12 +346,14 @@ def collect_image_files(input_paths):
             all_image_files.append(input_path)
         elif os.path.isdir(input_path):
             found_any = False
-            for file in os.listdir(input_path):
-                file_path = os.path.join(input_path, file)
-                if (os.path.isfile(file_path) and
-                        any(file.lower().endswith(ext) for ext in IMAGE_EXTENSIONS)):
-                    all_image_files.append(file_path)
-                    found_any = True
+            directories = os.walk(input_path) if recursive else [(input_path, [], os.listdir(input_path))]
+            for directory, _, files in directories:
+                for file in files:
+                    file_path = os.path.join(directory, file)
+                    if (os.path.isfile(file_path) and
+                            any(file.lower().endswith(ext) for ext in IMAGE_EXTENSIONS)):
+                        all_image_files.append(file_path)
+                        found_any = True
             if not found_any:
                 print(f'Warning: no image files found in directory {input_path}')
         else:
@@ -385,31 +365,57 @@ def main():
     args = parse_args()
 
     panel = PANELS[args.screen]
+
     print(f'Target panel: {panel.label} ({panel.width}x{panel.height}, {panel.bin_size:,} bytes per image)')
+    print(f'Colour profile: {PROFILES[args.profile]["label"]}')
+    print(f'Frame orientation: {args.orientation}; fit: {args.fit}')
+    print(f'Worker processes: {args.jobs}')
     if not HEIC_SUPPORTED:
         print("Note: pillow-heif not installed; .heic input is disabled (install it to enable).")
-    if args.dither == 'atkinson':
-        print("Using Atkinson dithering (tuned color metric). Note: --dither fs is much faster but less color-accurate.")
-    else:
-        print("Using Floyd-Steinberg dithering (fast).")
+    print(f'Dithering: {DITHERS[args.dither]["label"]}')
 
     if args.output_dir:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    all_image_files = collect_image_files(args.input_paths)
+    all_image_files = collect_image_files(args.input_paths, recursive=args.recursive)
     if not all_image_files:
         print('Error: no valid image files to process')
         sys.exit(1)
+    if args.preview and len(all_image_files) != 1:
+        sys.exit('Error: --preview requires exactly one input image; select one file or omit -p.')
 
     print(f'Found {len(all_image_files)} image files to process')
-    failures = 0
-    for image_file in tqdm(all_image_files, desc="Processing images", unit="file"):
-        if not process_image(image_file, args):
-            failures += 1
+    runner = ThreadedFunctionRunner(
+        process_image,
+        ((image_file, args) for image_file in all_image_files),
+        worker_count=args.jobs,
+        backend='process',
+        show_progress=True,
+        progress_description="Processing images",
+        progress_unit="file",
+    )
+    results = runner.run()
+    for result in results:
+        if not result.succeeded:
+            print(f'Error processing {result.call.args[0]}: {result.exception}')
+    failures = sum(not result.succeeded or not result.value for result in results)
 
     if failures:
         print(f'{failures} of {len(all_image_files)} file(s) failed to convert')
         sys.exit(1)
+
+    if args.preview:
+        # Read the actual BIN, so the preview includes quantization and packing.
+        # Open the browser in the parent, after all workers have finished.
+        from decode_bin import decode, show_preview
+        import webbrowser
+        try:
+            preview, _ = decode(output_path(all_image_files[0], args))
+            if args.orientation == 'landscape':
+                preview = preview.transpose(Image.Transpose.ROTATE_90)
+            show_preview(preview)
+        except (OSError, ValueError, webbrowser.Error) as error:
+            sys.exit(f'BIN saved, but preview failed: {error}')
 
 
 if __name__ == '__main__':

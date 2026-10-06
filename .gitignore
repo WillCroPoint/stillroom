@@ -12,7 +12,6 @@ build/
 develop-eggs/
 dist/
 downloads/
-eggs/
 .eggs/
 lib/
 lib64/
@@ -26,11 +25,8 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# PyInstaller
-#   Usually these files are written by a python script from a template
-#   before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# PyInstaller build output is covered by build/ and dist/.
+# Keep .spec and .manifest recipes available for version control.
 
 # Installer logs
 pip-log.txt
@@ -216,13 +212,32 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-# --- Project-specific ---
+# --- Stillroom: local files (never publish) ---
+
+# Personal test photos and converted samples, not Python packaging sources
+/eggs/
 
 # Generated panel output
 *.bin
 
 # macOS
 .DS_Store
+._*
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Local frame addresses and names
+frames.json
+
+# Local environment overrides; keep shareable examples trackable
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Docker persisted frame data (.env is covered above)
+/deploy/docker/data/
+
+# Private display name; never distribute with public releases.
+/branding.local.json

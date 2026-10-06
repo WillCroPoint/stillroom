@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Application icon: a framed landscape">
+  <!-- Original artwork for this companion app, not the official Fraimic logo. -->
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="#f6d4b8"/>
+  <rect x="51" y="37" width="160" height="192" rx="12" fill="#dfc1a8"/>
+  <rect x="43" y="29" width="160" height="192" rx="12" fill="#977257"/>
+  <rect x="50" y="36" width="146" height="178" rx="7" fill="#fffaf3"/>
+  <path fill="#f3d7b8" d="M68 54h110v142H68z"/>
+  <circle cx="151" cy="82" r="12" fill="#ed7c13"/>
+  <path fill="#cd9a75" d="M68 153l45-41 65 48v36H68z"/>
+  <path fill="#857660" d="M68 177l77-45 33 19v45H68z"/>
+</svg>

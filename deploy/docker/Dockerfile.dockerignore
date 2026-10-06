@@ -1,0 +1,9 @@
+**
+!/*.py
+!/requirements.txt
+!/LICENSE
+!/web/
+!/web/**
+!/deploy/
+!/deploy/docker/
+!/deploy/docker/healthcheck.py

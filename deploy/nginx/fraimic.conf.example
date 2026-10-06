@@ -1,0 +1,43 @@
+# Replace fraimic.example.com, certificate paths and upstream address.
+# Set FRAIMIC_PUBLIC_ORIGIN=https://fraimic.example.com in deploy/docker/.env.
+# Install on the Nginx host, then run nginx -t before reloading Nginx.
+server {
+    listen 80;
+    server_name fraimic.example.com;
+    return 301 https://fraimic.example.com$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name fraimic.example.com;
+    ssl_certificate /etc/letsencrypt/live/fraimic.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/fraimic.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    client_max_body_size 64m;
+    client_body_timeout 120s;
+
+    # For access outside a trusted LAN/VPN, enable authentication here or in
+    # your existing authentication gateway. The application has no user accounts.
+    # auth_basic "Local image editor";
+    # auth_basic_user_file /etc/nginx/fraimic.htpasswd;
+
+    # This location also proxies /favicon.ico, /icon.png and /apple-touch-icon.png.
+    # No separate static-file root or favicon location is needed.
+    location / {
+        # Same machine: leave Docker bound to 127.0.0.1.
+        # Separate Nginx host/container: use the Unraid LAN IP and published port.
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+        # Stream uploaded images; don't spool them to the proxy's disk.
+        proxy_request_buffering off;
+        proxy_buffering off;
+    }
+}

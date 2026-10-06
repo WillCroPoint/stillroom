@@ -1,0 +1,33 @@
+name: fraimic-studio
+services:
+  studio:
+    container_name: fraimic-studio
+    image: fraimic-studio:local
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    pull_policy: never
+    labels:
+      net.unraid.docker.webui: "${FRAIMIC_PUBLIC_ORIGIN:-http://localhost:8080}"
+      net.unraid.docker.icon: "${UNRAID_ICON_URL:-${FRAIMIC_PUBLIC_ORIGIN:-http://localhost:8080}/icon.png}"
+    restart: "${RESTART_POLICY:-always}"
+    init: true
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      STUDIO_APP_NAME: "${STUDIO_APP_NAME:-}"
+      FRAIMIC_PUBLIC_ORIGIN: "${FRAIMIC_PUBLIC_ORIGIN:-http://localhost:8080}"
+      TMPDIR: /tmp
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:8080"
+    volumes:
+      - "${DATA_DIR:-./data}:/data"
+    tmpfs:
+      - /tmp:size=1073741824,mode=1777
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 2m
+    mem_limit: 4g
+    cpus: 2

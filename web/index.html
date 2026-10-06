@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="256x256" href="/icon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead"><a class="wordmark" href="/">{{APP_NAME}}<span>LOCAL STUDIO</span></a><span class="local-badge"><i></i> Your images stay local</span></header>
+  <main>
+    <div class="intro"><div><p class="eyebrow">YOUR FRAME. YOUR PERSPECTIVE.</p><h1>A little art, closer to home.</h1><p>Choose a frame, find your crop, and make it yours.</p></div><span class="edition">NO CLOUD.<br>JUST YOUR FRAIMIC CANVAS.</span></div>
+    <section class="frame-bar" aria-label="Selected frame">
+      <div class="frame-symbol" aria-hidden="true">▣</div><div class="frame-select"><label for="frame-select">YOUR FRAME</label><div class="frame-choice"><span id="frame-name-width" aria-hidden="true">Add your first frame</span><select id="frame-select"><option value="">Add your first frame</option></select></div></div>
+      <p id="frame-details">A friendly name. A local address. Your favourite wall.</p><button id="manage-frames" class="secondary">Manage frames</button>
+    </section>
+    <section id="frame-manager" class="panel manager" hidden>
+      <div class="section-heading"><div><p class="eyebrow">YOUR COLLECTION</p><h2>Frames at home</h2></div><button id="close-manager" class="text-button">Close</button></div>
+      <div id="frame-list"></div><button id="add-frame" class="secondary">+ Add a frame</button>
+      <div class="manager-footer"><p>Saved on this computer in <code id="config-path">frames.json</code></p><button id="save-frames" class="primary">Save frames</button></div>
+    </section>
+    <div class="workspace">
+      <section class="panel editor-panel">
+        <div class="section-heading"><div><p class="eyebrow">COMPOSE</p><h2>Find the right perspective.</h2></div><button id="replace-image" class="text-button">Choose image</button></div>
+        <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.webp,.heic,.heif" hidden>
+        <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Choose an image or drop it here">
+          <div class="drop-illustration" aria-hidden="true"><div class="mini-landscape"><span>↗</span></div></div>
+          <h3>A new view starts here.</h3><p>Drop a photo, or <span class="orange">browse your files</span></p><small>JPG, PNG, WebP &amp; HEIC · up to 60 MB</small>
+        </div>
+        <div id="editor" hidden>
+          <div class="canvas-surround" id="canvas-surround"><canvas id="crop-canvas" width="600" height="600" tabindex="0" aria-label="Crop preview. Drag to reposition; use arrow keys to move the image."></canvas></div>
+          <div class="image-caption"><span id="image-name"></span><span id="image-size"></span></div>
+          <div class="image-tools"><div class="button-pair"><button id="rotate-left" class="secondary" title="Rotate 90 degrees counter-clockwise">↶ 90°</button><button id="rotate-right" class="secondary" title="Rotate 90 degrees clockwise">↷ 90°</button></div><button id="reset-crop" class="text-button">Reset crop</button></div>
+          <div id="zoom-controls"><label class="range-label" for="zoom">Zoom <output id="zoom-value">1.00×</output></label><input type="range" id="zoom" min="1" max="4" step="0.01" value="1"></div>
+          <p id="crop-hint" class="hint">Drag the image to reframe it. Scroll to zoom. The frame keeps its proportions.</p>
+        </div>
+      </section>
+      <aside class="panel controls-panel">
+        <p class="eyebrow">FINISHING TOUCHES</p><h2>Make it fit.</h2>
+        <fieldset class="fit-field"><legend>Framing</legend><div class="segmented"><label><input type="radio" name="fit" value="crop" checked><span>Crop</span></label><label><input type="radio" name="fit" value="letterbox"><span>Letterbox</span></label></div><p class="hint" id="fit-help">Fill the frame. Trim the edges.</p></fieldset>
+        <details id="background-controls" class="adjustments"><summary>Background (optional)</summary>
+          <label for="background">Background</label><select id="background"><option value="solid">Solid colour</option><option value="gradient">Soft automatic gradient</option></select>
+          <div id="background-solid"><label for="background-color">Colour</label><input id="background-color" type="color" value="#ffffff"></div>
+          <div id="background-gradient"><label for="background-angle">Direction <output id="background-angle-value">90°</output></label><input id="background-angle" type="range" min="0" max="360" step="15" value="90"></div>
+          <p id="background-help" class="hint">One background fills transparent areas and the space around the image. Gradient direction: 0° right, 90° down.</p>
+        </details>
+        <label for="profile">Colour look</label><select id="profile"><option value="soft">Soft</option></select><p id="profile-help" class="hint">Gentler contrast, lifted shadows and restrained highlights.</p>
+        <label for="dither">Colour conversion</label><select id="dither"><option value="fs">Floyd–Steinberg · fast</option></select>
+        <p id="dither-help" class="hint"></p>
+        <details class="adjustments"><summary>Fine-tune the look (optional)</summary><label for="brightness">Brightness <output id="brightness-value">1.00</output></label><input id="brightness" type="range" min="0" max="2" step="0.05" value="1"><label for="contrast">Contrast <output id="contrast-value">1.00</output></label><input id="contrast" type="range" min="0" max="2" step="0.05" value="1"><label for="saturation">Saturation <output id="saturation-value">1.00</output></label><input id="saturation" type="range" min="0" max="2" step="0.05" value="1"><p class="hint">The converted preview includes these adjustments and the six display colours.</p></details>
+        <div class="convert-area"><p class="hint">Check the actual six-colour result before sending.</p><button id="convert" class="primary full" disabled>Convert &amp; preview <span>→</span></button></div>
+      </aside>
+    </div>
+    <section class="panel result-panel">
+      <div class="result-copy"><p class="eyebrow">READY FOR YOUR WALL</p><h2>The final impression.</h2><p id="result-description">Your converted image will appear here, in the orientation of your frame.</p><div id="status" role="status" aria-live="polite">Add a frame and choose a photo to get started.</div><progress id="busy-progress" hidden aria-label="Operation in progress"></progress><button id="send" class="primary" disabled>Send to frame <span>↗</span></button><a id="download-bin" hidden download="image.bin">Save a copy of the BIN</a></div>
+      <div id="result-placeholder" class="result-placeholder" aria-hidden="true"><div class="empty-frame"></div><span>YOUR NEXT PIECE</span></div>
+      <a id="result-link" class="result-link" hidden target="_blank" rel="noopener"><img id="result-image" alt="Converted six-colour image in frame orientation"></a>
+    </section>
+    <footer><span>Made for your Fraimic. At home, offline.</span><span>Local companion · independent of the online service<br>Not affiliated with, sponsored by, or endorsed by Fraimic.</span></footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "frames": [
+    {
+      "id": "living-room",
+      "name": "Living room",
+      "host": "fraimic.local",
+      "screen": "315",
+      "orientation": "landscape"
+    }
+  ]
+}
