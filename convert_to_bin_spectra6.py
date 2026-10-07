@@ -21,11 +21,6 @@ import argparse
 from image_background import extend_to_frame, flatten, gradient_colors, background_color
 from threaded_function_runner import ThreadedFunctionRunner
 
-#################################################################################
-# DEBUG: open generated image in browser
-#import webbrowser
-#################################################################################
-
 # HEIC support is optional: only enabled if pillow-heif is installed. JPEG/PNG/etc
 # work without it.
 try:
@@ -244,19 +239,7 @@ def process_image(image_file, args):
         # Determine output path (next to input, or in --output-dir if given)
         output_filename = output_path(image_file, args)
 
-        #################################################################################
-        ## DEBUG: open generated image in browser
-        #debug_output_filename = output_filename + '-DEBUG.png'
-        ##scaled_image.save(debug_output_filename)
-        #framed_image.save(debug_output_filename)
-        #webbrowser.open('file://' + debug_output_filename)
-        #################################################################################
-
         generate_binary_file(color_indices, output_filename, panel)
-
-        #################################################################################
-        #print(f'Successfully converted {image_file} to {output_filename}')
-        #################################################################################
         return True
     except Exception as e:
         print(f'Error processing {image_file}: {e}')

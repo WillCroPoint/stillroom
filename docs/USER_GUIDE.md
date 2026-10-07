@@ -111,7 +111,8 @@ exactly; always check the converted preview. Physical results also depend on the
 panel and lighting.
 
 Floyd–Steinberg is the fast default. Other methods offer different textures and
-can be slower. See the [colour and dithering reference](CLI.md#options) for details.
+can be slower. See the [colour profile reference](CLI.md#colour-profiles) and
+[dithering comparison](CLI.md#which-dithering-should-i-use) for details.
 
 ### Preview and send
 

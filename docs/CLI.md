@@ -9,6 +9,8 @@ activated. See [installation](../README.md#installation).
 
 - [Conversion](#conversion)
 - [Options](#options)
+  - [Colour profiles](#colour-profiles)
+  - [Dithering methods](#which-dithering-should-i-use)
 - [Supported input formats](#supported-input-formats)
 - [Loading onto the display](#loading-onto-the-display)
 - [Previewing a `.bin`](#previewing-a-bin)
@@ -172,7 +174,9 @@ transparent pixels and letterbox space. `-l black` and `-l white` remain support
 as colour shortcuts; `-C` takes precedence. An opaque image in Crop mode hides
 the background completely. See [Image backgrounds](#image-backgrounds) for examples.
 
-### Choose a colour look (`-P` / `--profile`)
+### Colour profiles
+
+Select a profile with `-P` / `--profile`.
 
 The converter, `upload.py` image conversion and the web editor share the same profiles:
 
