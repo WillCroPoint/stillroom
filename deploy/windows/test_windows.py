@@ -10,13 +10,15 @@ sys.path.insert(0, str(ROOT))
 class WindowsSettingsTests(unittest.TestCase):
     def test_preferences_use_appdata(self):
         from launcher import data_directory
-        with patch.dict('os.environ', {'APPDATA': '/test/roaming'}, clear=True):
+        with patch.dict('os.environ', {'APPDATA': '/test/roaming'}, clear=True), \
+                patch('pathlib.Path.home', side_effect=RuntimeError('Home unavailable')):
             self.assertEqual(data_directory(), Path('/test/roaming/Stillroom'))
 
     def test_isolated_test_directory_takes_priority(self):
         from launcher import data_directory
         with patch.dict('os.environ', {'APPDATA': '/test/roaming',
-                        'STILLROOM_DATA_DIR': '/test/isolated'}, clear=True):
+                        'STILLROOM_DATA_DIR': '/test/isolated'}, clear=True), \
+                patch('pathlib.Path.home', side_effect=RuntimeError('Home unavailable')):
             self.assertEqual(data_directory(), Path('/test/isolated'))
 
 

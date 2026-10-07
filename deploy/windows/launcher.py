@@ -16,8 +16,12 @@ if not getattr(sys, 'frozen', False):
 
 
 def data_directory():
-    return Path(os.environ.get('STILLROOM_DATA_DIR',
-        str(Path(os.environ.get('APPDATA', Path.home() / 'AppData/Roaming')) / 'Stillroom'))).expanduser()
+    override = os.environ.get('STILLROOM_DATA_DIR')
+    if override:
+        return Path(override).expanduser()
+    appdata = os.environ.get('APPDATA')
+    base = Path(appdata) if appdata else Path.home() / 'AppData/Roaming'
+    return (base / 'Stillroom').expanduser()
 
 
 def confirm_active_work(studio, window):
