@@ -91,6 +91,22 @@ The interface processes one image at a time (up to 60 MB and 40 megapixels).
 For detailed controls, backgrounds and troubleshooting, see the
 [user guide](docs/USER_GUIDE.md).
 
+### macOS application
+
+The [macOS application](deploy/macos/README.md) provides a desktop package.
+It bundles Python and the converter in a native window.
+Docker/Unraid and Linux server installation remain the primary deployment paths.
+The macOS app has no Apple Developer ID signature or notarization. Downloaded
+copies require a one-time approval in macOS settings: see the
+[first-launch guide](deploy/macos/README.md#first-launch-of-a-downloaded-app).
+
+### Windows application
+
+The [Windows application](deploy/windows/README.md) provides a desktop package.
+Its build workflow produces a portable x64 application with Python included.
+The downloaded package has been tested on Windows 10 64-bit, including frame upload. Settings use JSON files in
+`%APPDATA%\Stillroom`, with no application preferences stored in the registry.
+
 ## Guides
 
 | Guide | What you’ll find |

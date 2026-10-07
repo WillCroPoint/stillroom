@@ -4,7 +4,8 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 import numpy as np
 from PIL import Image
@@ -76,7 +77,7 @@ class DecodeTests(unittest.TestCase):
                      contextlib.redirect_stdout(io.StringIO()), \
                      contextlib.redirect_stderr(io.StringIO()) as errors:
                     decode_bin.main()
-                preview = Path(unquote(urlparse(browser.call_args.args[0]).path))
+                preview = Path(url2pathname(urlparse(browser.call_args.args[0]).path))
                 self.assertTrue(preview.exists())  # survives main() for asynchronous browser loading
                 with Image.open(preview) as actual:
                     portrait, _ = decode_bin.decode(path)
