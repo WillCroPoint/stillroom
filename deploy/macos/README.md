@@ -17,8 +17,9 @@ When a macOS bundle is attached to a release:
    The automatically generated **Source code** archives are not the application.
 2. Extract the archive, move **Stillroom.app** to **Applications**, and double-click it.
 3. If macOS says it cannot verify the developer or check the app for malicious
-   software, dismiss the warning, then open **System Settings → Privacy & Security**.
-4. Find the message about Stillroom and click **Open Anyway**. Confirm with your
+   software, it may offer only to close the app or move it to the Trash. Dismiss
+   the warning, then open **System Settings → Privacy & Security**.
+4. Scroll down to **Security**, find the message about Stillroom and click **Open Anyway**. Confirm with your
    password or Touch ID if requested, then confirm opening the application.
 5. Subsequent launches normally work directly from Finder. A new download or an
    updated version may require approval again.
@@ -47,7 +48,7 @@ in `build/` and `dist/`. All three are ignored by Git. The app targets the build
 machine's architecture; an Apple Silicon build is not an Intel build. The oldest
 supported macOS version also depends on the Python and binary dependencies used.
 
-This application is in pre-release validation. Public bundles are intended to remain
+Public bundles are intended to remain
 without Developer ID signing or notarization; include the first-launch instructions
 above with each release. Test the downloaded archive on the advertised macOS
 versions before publishing it. The build uses PyInstaller and pywebview's native WebKit window.
@@ -121,16 +122,13 @@ from a terminal. The standard browser-based editor remains available through
 
 ## Validation
 
-Both desktop applications are in pre-release validation.
-
 The Apple Silicon application was tested with Python 3.14: native file selection,
 photo conversion in the frozen worker process, BIN export (960,000 bytes for
 the 13.3-inch panel), server shutdown and a visible startup error for invalid
 settings. The existing 53 tests also pass with the macOS build dependencies.
-The maintainer also confirmed a successful transfer from the bundle to a physical
-frame (the first attempt failed with a network error; retrying succeeded).
-Intel Macs, older macOS versions and the first-launch flow of a downloaded
-archive still need validation before those configurations are advertised.
+The maintainer also tested the downloaded public archive, approved its first
+launch through Privacy & Security, and successfully sent an image to a physical
+frame. Intel Macs and older macOS versions remain untested.
 
 ## Preparing release notes
 

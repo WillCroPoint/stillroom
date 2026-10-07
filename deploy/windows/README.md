@@ -4,7 +4,15 @@ Docker/Unraid and Linux servers remain the primary deployment. This
 Windows wrapper reuses the same editor and converter. Its packaging and launcher
 live here; the server does not depend on Windows-specific libraries.
 
-## Download and run a test build
+## Download and run
+
+Download `Stillroom-windows-x64.zip` from the
+[GitHub Releases page](https://github.com/WillCroPoint/stillroom/releases).
+Extract it once, keep the entire **Stillroom** folder together, and open
+**Stillroom.exe**. The automatically generated **Source code** archives are not
+application packages.
+
+### Development builds from Actions
 
 In the GitHub repository, open **Actions → Windows application**, select a
 successful run, then download **Stillroom-windows-x64** from **Artifacts**.
@@ -15,7 +23,7 @@ Keep the entire **Stillroom** directory together (including `_internal`), and
 open **Stillroom.exe**. Moving only the EXE will break the application.
 Python and the conversion dependencies are included; Docker is not required.
 
-The first validation target is **Windows 10 64-bit (x64)**. Windows 11 x64
+The downloaded package has been tested on **Windows 10 64-bit (x64)**. Windows 11 x64
 will be listed as tested only after a separate validation. The interface needs Microsoft's
 [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 and .NET Framework 4.6.2 or newer. Verify these prerequisites on the test PC;
@@ -92,8 +100,10 @@ saved settings, and closing during a conversion or transfer.
 
 ## Validation status
 
-Both desktop applications are in pre-release validation. This Windows package
-was prepared from macOS; the first GitHub Actions build and interactive tests
-on Windows 10 x64 are pending. Publish a release only after validating the
-downloaded package on the advertised Windows versions. The Windows Server runner
-used for construction does not itself establish Windows 10 or 11 compatibility.
+The Windows build passed 51 application tests and a conversion check inside the
+packaged executable on GitHub Actions. The maintainer then tested the downloaded
+package on Windows 10 x64 and confirmed the complete workflow, including sending
+an image to a physical frame and saved settings. No security warning appeared on
+that PC; other installations may display SmartScreen warnings. Windows 11 remains
+untested. Validate future packages on the advertised Windows versions; a successful
+build on Windows Server alone does not establish desktop compatibility.

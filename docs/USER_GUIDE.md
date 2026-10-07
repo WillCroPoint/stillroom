@@ -5,8 +5,8 @@
 This guide covers the shared image-editing workflow. For installation, launching
 and platform-specific settings, see the [Python quick start](../README.md#installation),
 [Docker / Unraid guide](../deploy/README.md), [macOS guide](../deploy/macos/README.md)
-or [Windows guide](../deploy/windows/README.md). Both desktop applications are
-currently in pre-release validation.
+or [Windows guide](../deploy/windows/README.md). The downloaded desktop packages have been tested on macOS Apple Silicon and
+Windows 10 x64, including sending images to a physical frame.
 
 The Python commands below apply to a source installation; run them from the
 repository directory with your Python environment active. Desktop packages
@@ -184,7 +184,7 @@ inspiration from Fraimic's sign-in page; no remote assets are loaded.
 ## Troubleshooting
 
 - **The page does not open (source installation):** keep the terminal running and open the URL it prints.
-- **A desktop application does not open:** see the [macOS first-launch guide](../deploy/macos/README.md#first-launch-of-a-downloaded-app) or [Windows prerequisites and first launch](../deploy/windows/README.md#download-and-run-a-test-build).
+- **A desktop application does not open:** see the [macOS first-launch guide](../deploy/macos/README.md#first-launch-of-a-downloaded-app) or [Windows prerequisites and first launch](../deploy/windows/README.md#download-and-run).
   Use `python gui.py -n` to print the URL without launching a browser.
 - **An image is rejected:** use JPG, PNG, WebP, HEIC or HEIF, within the 60 MB and
   40-megapixel limits. HEIC/HEIF needs `pillow-heif`.
