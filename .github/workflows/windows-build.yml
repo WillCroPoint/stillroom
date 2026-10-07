@@ -1,0 +1,58 @@
+name: Windows application
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/windows-build.yml'
+      - 'deploy/windows/**'
+      - '*.py'
+      - 'requirements.txt'
+      - 'web/**'
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Build portable application
+        shell: pwsh
+        run: ./deploy/windows/build.ps1
+      - name: Test shared application (excluding Unix deployment scripts)
+        shell: pwsh
+        run: |
+          & deploy/windows/.venv/Scripts/python.exe deploy/windows/test_windows.py
+          if ($LASTEXITCODE -ne 0) { throw 'Application tests failed.' }
+      - name: Test frozen conversion worker
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP 'stillroom-smoke.json'
+          $app = Resolve-Path deploy/windows/dist/Stillroom/Stillroom.exe
+          $process = Start-Process -FilePath $app -ArgumentList '--smoke-test', ('"' + $report + '"') -PassThru
+          if (-not $process.WaitForExit(120000)) {
+            taskkill /PID $process.Id /T /F
+            throw 'Frozen conversion timed out.'
+          }
+          if ($process.ExitCode -ne 0) { throw 'Frozen conversion failed.' }
+          $result = Get-Content $report -Raw | ConvertFrom-Json
+          if (-not $result.ok) { throw $result.error }
+          Write-Host "Frozen conversion passed: $($result.bytes) bytes"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Stillroom-windows-x64
+          path: deploy/windows/dist/Stillroom-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 7

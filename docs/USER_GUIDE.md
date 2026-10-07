@@ -2,8 +2,15 @@
 
 [← Back to the README](../README.md)
 
-Install Stillroom using the [quick start](../README.md#installation). Run the
-commands below from the repository directory with your Python environment active.
+This guide covers the shared image-editing workflow. For installation, launching
+and platform-specific settings, see the [Python quick start](../README.md#installation),
+[Docker / Unraid guide](../deploy/README.md), [macOS guide](../deploy/macos/README.md)
+or [Windows guide](../deploy/windows/README.md). Both desktop applications are
+currently in pre-release validation.
+
+The Python commands below apply to a source installation; run them from the
+repository directory with your Python environment active. Desktop packages
+include Python and open the same editor in an application window.
 
 ## Contents
 
@@ -15,7 +22,7 @@ commands below from the repository directory with your Python environment active
 
 ## Local graphical interface
 
-With your Python environment activated, launch:
+For a source installation, activate your Python environment and launch:
 
 ```bash
 python gui.py
@@ -27,8 +34,9 @@ page: configure and select a frame, drop a JPG/PNG/HEIC photo, rotate it, choose
 upright six-colour preview, then send it to the selected frame.
 
 No additional dependencies, web framework, build step, cloud service or account is
-required. The Python server listens only on `127.0.0.1`. Keep the terminal running
-while using the interface. HEIC uses the same optional `pillow-heif` dependency as
+required for this source-based workflow beyond the installed Python dependencies.
+The Python server listens only on `127.0.0.1`. When launched from a terminal, keep
+that terminal running while using the interface. HEIC uses the same optional `pillow-heif` dependency as
 the command-line converter.
 
 ### Set up a frame
@@ -137,7 +145,7 @@ This is an independent open-source project for Fraimic-compatible frames, not
 affiliated with, sponsored by, or endorsed by Fraimic. Fraimic is referenced to
 identify compatible devices.
 
-To choose a private display name, copy `branding.example.json` to
+For a source installation, to choose a private display name, copy `branding.example.json` to
 `branding.local.json` beside `gui.py`, then edit `app_name`. For example:
 
 ```json
@@ -145,8 +153,8 @@ To choose a private display name, copy `branding.example.json` to
 ```
 
 Restart the application to apply changes. This file is ignored by Git and excluded
-from the Docker build. Do not include it in public release archives or future
-macOS bundles. The public default is centralized in `branding.py`.
+from the Docker build. Do not include it in public release archives or
+desktop packages. The public default is centralized in `branding.py`.
 
 `STUDIO_APP_NAME` overrides the local file, for example:
 
@@ -160,8 +168,11 @@ to the local branding file if present, then the public default.
 The name appears in the page title, header and server startup/shutdown messages.
 The non-affiliation notice always stays visible, regardless of the display name.
 Frame settings, URLs, container names and storage locations remain stable.
-A future macOS packager can use the same `load_app_name` helper; no macOS bundle
-is built by this repository yet.
+For desktop applications, use `branding.local.json` in the platform's settings
+folder. See the [macOS branding instructions](../deploy/macos/README.md#settings-and-use)
+and [Windows branding instructions](../deploy/windows/README.md#settings-and-personal-branding)
+for its location and the distinction between the interface title and the packaged
+application name.
 
 ### Appearance
 
@@ -172,7 +183,8 @@ inspiration from Fraimic's sign-in page; no remote assets are loaded.
 
 ## Troubleshooting
 
-- **The page does not open:** keep the terminal running and open the URL it prints.
+- **The page does not open (source installation):** keep the terminal running and open the URL it prints.
+- **A desktop application does not open:** see the [macOS first-launch guide](../deploy/macos/README.md#first-launch-of-a-downloaded-app) or [Windows prerequisites and first launch](../deploy/windows/README.md#download-and-run-a-test-build).
   Use `python gui.py -n` to print the URL without launching a browser.
 - **An image is rejected:** use JPG, PNG, WebP, HEIC or HEIF, within the 60 MB and
   40-megapixel limits. HEIC/HEIF needs `pillow-heif`.
